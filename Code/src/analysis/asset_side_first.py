@@ -195,54 +195,149 @@ class AssetSideAnalyzer:
             ax.set_xticklabels(labels, rotation=45, ha='right')
             ax.grid(True, axis='y', alpha=0.25)
 
-        # 1) Full proxy vs Reported
+        # 1) Full proxy vs Reported with 2023Q1-Q2 shading
         fig1, ax1 = plt.subplots(figsize=(12, 8))
         x = range(len(plot_df))
-        ax1.plot(x, plot_df['Asset_Side_Intervention'], label='Asset-Side Proxy (Full)', color=colors['predicted'], linewidth=2.5)
+        # Add shading for 2023Q1-Q2
+        q1_2023 = pd.Period('2023Q1', freq='Q')
+        q2_2023 = pd.Period('2023Q2', freq='Q')
+        shade_mask = (plot_df['Quarter'] >= q1_2023) & (plot_df['Quarter'] <= q2_2023)
+        if shade_mask.any():
+            shade_idx = plot_df[shade_mask].index
+            shade_start = list(plot_df.index).index(shade_idx[0])
+            shade_end = list(plot_df.index).index(shade_idx[-1]) + 1
+            ax1.axvspan(shade_start - 0.5, shade_end - 0.5, color='lightgrey', alpha=0.3, zorder=0)
+        ax1.plot(x, plot_df['Asset_Side_Intervention'], label='Predicted Intervention', color=colors['predicted'], linewidth=2.5)
         ax1.plot(x, plot_df['Reported_FX_Transactions'], label='Reported FX Transactions', color=colors['reported'], linewidth=2.5, linestyle='--')
         ax1.axhline(0, color='black', alpha=0.3)
-        ax1.set_ylabel('Quarterly Flow (CHF Millions)')
+        ax1.set_ylabel('Quarterly Flow (CHF Millions)', fontsize=14)
+        ax1.tick_params(axis='both', which='major', labelsize=12)
         format_quarter_axis(ax1, plot_df['QLabel'].tolist())
         for spine in ['top','right']:
             ax1.spines[spine].set_visible(False)
         ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
-        ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False)
+        ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
         ax1.grid(False)
+        # Add label to shaded region after plot is created
+        if shade_mask.any():
+            mid_shade = (shade_start + shade_end - 1) / 2
+            y_range = ax1.get_ylim()[1] - ax1.get_ylim()[0]
+            y_pos = ax1.get_ylim()[1] - 0.01 * y_range
+            ax1.text(mid_shade, y_pos, 'Credit Suisse\nEmergency Lending', 
+                    ha='center', va='top', fontsize=9, color='dimgray', style='italic')
+        # Add directional arrows on right side inside plot
+        x_arrow = len(plot_df) - 1.5
+        y_min, y_max = ax1.get_ylim()
+        y_range = y_max - y_min
+        arrow_y_up = y_max * 0.6 if y_max > 0 else y_range * 0.2
+        arrow_y_down = y_min * 0.6 if y_min < 0 else -y_range * 0.2
+        # Up arrow (green)
+        arrow_up_start = arrow_y_up - y_range * 0.08
+        ax1.annotate('', xy=(x_arrow, arrow_y_up), xytext=(x_arrow, arrow_up_start),
+                    arrowprops=dict(arrowstyle='->', lw=2.5, color='green'))
+        arrow_up_center = (arrow_y_up + arrow_up_start) / 2
+        ax1.text(x_arrow - 0.5, arrow_up_center, 'Buying FC\nSelling CHF', 
+                fontsize=8, color='green', va='center', ha='right', weight='bold')
+        # Down arrow (red)
+        arrow_down_start = arrow_y_down + y_range * 0.08
+        ax1.annotate('', xy=(x_arrow, arrow_y_down), xytext=(x_arrow, arrow_down_start),
+                    arrowprops=dict(arrowstyle='->', lw=2.5, color='red'))
+        arrow_down_center = (arrow_y_down + arrow_down_start) / 2
+        ax1.text(x_arrow - 0.5, arrow_down_center, 'Selling FC\nBuying CHF', 
+                fontsize=8, color='red', va='center', ha='right', weight='bold')
         plt.tight_layout(); plt.show()
 
-        # 2) FX-only vs Reported
-        fig2, ax2 = plt.subplots(figsize=(12, 8))
-        ax2.plot(x, plot_df['Asset_Side_FX_Only'], label='FX Reserves Only', color=colors['predicted'], linewidth=2.5)
-        ax2.plot(x, plot_df['Reported_FX_Transactions'], label='Reported FX Transactions', color=colors['reported'], linewidth=2.5, linestyle='--')
-        ax2.axhline(0, color='black', alpha=0.3)
-        ax2.set_ylabel('Quarterly Flow (CHF Millions)')
-        format_quarter_axis(ax2, plot_df['QLabel'].tolist())
+        # Statistics: full period vs excluding 2023Q1-Q2
+        clean_full = plot_df[['Asset_Side_Intervention', 'Reported_FX_Transactions']].dropna()
+        clean_excl = plot_df[~shade_mask][['Asset_Side_Intervention', 'Reported_FX_Transactions']].dropna()
+        if len(clean_full) > 2:
+            corr_full = clean_full['Asset_Side_Intervention'].corr(clean_full['Reported_FX_Transactions'])
+            mae_full = abs(clean_full['Asset_Side_Intervention'] - clean_full['Reported_FX_Transactions']).mean()
+            rmse_full = np.sqrt(((clean_full['Asset_Side_Intervention'] - clean_full['Reported_FX_Transactions'])**2).mean())
+            print('\nAsset-Side Proxy Summary (Full Period 2020+):')
+            print(f'  Correlation: {corr_full:.3f}')
+            print(f'  Mean Absolute Error: {mae_full:,.1f} CHF Millions')
+            print(f'  Root Mean Square Error: {rmse_full:,.1f} CHF Millions')
+            print(f'  Quarterly data points: {len(clean_full)}')
+        if len(clean_excl) > 2:
+            corr_excl = clean_excl['Asset_Side_Intervention'].corr(clean_excl['Reported_FX_Transactions'])
+            mae_excl = abs(clean_excl['Asset_Side_Intervention'] - clean_excl['Reported_FX_Transactions']).mean()
+            rmse_excl = np.sqrt(((clean_excl['Asset_Side_Intervention'] - clean_excl['Reported_FX_Transactions'])**2).mean())
+            print('\nAsset-Side Proxy Summary (Excluding 2023Q1-Q2):')
+            print(f'  Correlation: {corr_excl:.3f}')
+            print(f'  Mean Absolute Error: {mae_excl:,.1f} CHF Millions')
+            print(f'  Root Mean Square Error: {rmse_excl:,.1f} CHF Millions')
+            print(f'  Quarterly data points: {len(clean_excl)}')
+
+        # 2) Monthly bar chart (past 24 months)
+        monthly_df = self.calculate_asset_side_monthly_interventions(self.combined_df)
+        monthly_df['Date'] = pd.to_datetime(monthly_df['Date'])
+        cutoff = pd.Timestamp.now() - pd.DateOffset(months=24)
+        recent = monthly_df[monthly_df['Date'] >= cutoff].copy()
+        recent = recent.sort_values('Date')
+        recent['MonthLabel'] = recent['Date'].dt.strftime('%Y-%m')
+        fig2, ax2 = plt.subplots(figsize=(14, 6))
+        xm = range(len(recent))
+        ax2.bar(xm, recent['Asset_Side_Intervention_Monthly'], color=colors['predicted'], alpha=0.8, edgecolor='black', linewidth=0.5)
+        ax2.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+        tick_pos = [i for i in xm if i % 3 == 0]
+        ax2.set_xticks(tick_pos)
+        ax2.set_xticklabels([recent['MonthLabel'].iloc[i] for i in tick_pos], rotation=45, ha='right', fontsize=11)
+        ax2.set_ylabel('Monthly Flow (CHF Millions)', fontsize=14)
+        ax2.tick_params(axis='y', which='major', labelsize=12)
         for spine in ['top','right']:
             ax2.spines[spine].set_visible(False)
         ax2.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
-        ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False)
         ax2.grid(False)
         plt.tight_layout(); plt.show()
 
-        # 3) Correlation scatter
-        clean = plot_df[['Asset_Side_Intervention', 'Reported_FX_Transactions']].dropna()
-        fig3, ax3 = plt.subplots(figsize=(10, 8))
-        ax3.scatter(clean['Asset_Side_Intervention'], clean['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
-        if len(clean) > 2:
-            corr = clean['Asset_Side_Intervention'].corr(clean['Reported_FX_Transactions'])
-            min_val = min(clean.min())
-            max_val = max(clean.max())
+        # 3) Correlation scatter - Full Period
+        clean_full = plot_df[['Asset_Side_Intervention', 'Reported_FX_Transactions']].dropna()
+        fig3, ax3 = plt.subplots(figsize=(12, 8))
+        ax3.scatter(clean_full['Asset_Side_Intervention'], clean_full['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
+        if len(clean_full) > 2:
+            corr_full = clean_full['Asset_Side_Intervention'].corr(clean_full['Reported_FX_Transactions'])
+            min_val = min(clean_full.min())
+            max_val = max(clean_full.max())
             ax3.plot([min_val, max_val], [min_val, max_val], color=colors['perfect'], linestyle='--', linewidth=2, label='Perfect Correlation')
-            z = np.polyfit(clean['Asset_Side_Intervention'], clean['Reported_FX_Transactions'], 1)
+            z = np.polyfit(clean_full['Asset_Side_Intervention'], clean_full['Reported_FX_Transactions'], 1)
             p = np.poly1d(z)
-            ax3.plot(clean['Asset_Side_Intervention'], p(clean['Asset_Side_Intervention']), color=colors['trend'], linewidth=2, label='Trend')
-        ax3.set_xlabel('Asset-Side Proxy (CHF Millions)')
-        ax3.set_ylabel('Reported FX Transactions (CHF Millions)')
+            ax3.plot(clean_full['Asset_Side_Intervention'], p(clean_full['Asset_Side_Intervention']), color=colors['trend'], linewidth=2, label=f'Trend (r={corr_full:.3f})')
+        ax3.set_xlabel('Predicted Intervention (CHF Millions)', fontsize=14)
+        ax3.set_ylabel('Reported FX Transactions (CHF Millions)', fontsize=14)
+        ax3.tick_params(axis='both', which='major', labelsize=12)
         for spine in ['top','right']:
             ax3.spines[spine].set_visible(False)
         ax3.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
         ax3.xaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+        ax3.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
         ax3.grid(False)
+        plt.tight_layout(); plt.show()
+
+        # 4) Correlation scatter - Excluding 2023Q1-Q2
+        q1_2023 = pd.Period('2023Q1', freq='Q')
+        q2_2023 = pd.Period('2023Q2', freq='Q')
+        shade_mask = (plot_df['Quarter'] >= q1_2023) & (plot_df['Quarter'] <= q2_2023)
+        clean_excl = plot_df[~shade_mask][['Asset_Side_Intervention', 'Reported_FX_Transactions']].dropna()
+        fig4, ax4 = plt.subplots(figsize=(12, 8))
+        ax4.scatter(clean_excl['Asset_Side_Intervention'], clean_excl['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
+        if len(clean_excl) > 2:
+            corr_excl = clean_excl['Asset_Side_Intervention'].corr(clean_excl['Reported_FX_Transactions'])
+            min_val = min(clean_excl.min())
+            max_val = max(clean_excl.max())
+            ax4.plot([min_val, max_val], [min_val, max_val], color=colors['perfect'], linestyle='--', linewidth=2, label='Perfect Correlation')
+            z = np.polyfit(clean_excl['Asset_Side_Intervention'], clean_excl['Reported_FX_Transactions'], 1)
+            p = np.poly1d(z)
+            ax4.plot(clean_excl['Asset_Side_Intervention'], p(clean_excl['Asset_Side_Intervention']), color=colors['trend'], linewidth=2, label=f'Trend (r={corr_excl:.3f})')
+        ax4.set_xlabel('Predicted Intervention (CHF Millions)', fontsize=14)
+        ax4.set_ylabel('Reported FX Transactions (CHF Millions)', fontsize=14)
+        ax4.tick_params(axis='both', which='major', labelsize=12)
+        for spine in ['top','right']:
+            ax4.spines[spine].set_visible(False)
+        ax4.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+        ax4.xaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+        ax4.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
+        ax4.grid(False)
         plt.tight_layout(); plt.show()
 
 
@@ -265,6 +360,7 @@ def run_full_asset_side_analysis(processed_data: Dict[str, pd.DataFrame], monthl
     analyzer = create_asset_side_analyzer()
     analyzer.load_asset_data(processed_data)
     combined_df = analyzer.create_combined_asset_dataset()
+    analyzer.combined_df = combined_df  # Store for visualization
     if monthly:
         return analyzer.calculate_asset_side_monthly_interventions(combined_df)
     intervention_df = analyzer.calculate_asset_side_interventions(combined_df)

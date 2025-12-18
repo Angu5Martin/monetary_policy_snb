@@ -278,75 +278,151 @@ class AssetSideSecondAnalyzer:
 			ax.set_xticklabels(labels, rotation=45, ha='right')
 			ax.grid(True, axis='y', alpha=0.3)
 
-		# 1) Predicted vs Reported
+		# 1) Predicted vs Reported with 2023Q1-Q2 shading
 		fig1, ax1 = plt.subplots(figsize=(12,8))
+		# Add shading for 2023Q1-Q2
+		q1_2023 = pd.Period('2023Q1', freq='Q')
+		q2_2023 = pd.Period('2023Q2', freq='Q')
+		shade_mask = (q_df['Quarter'] >= q1_2023) & (q_df['Quarter'] <= q2_2023)
+		if shade_mask.any():
+			shade_idx = q_df[shade_mask].index
+			shade_start = list(q_df.index).index(shade_idx[0])
+			shade_end = list(q_df.index).index(shade_idx[-1]) + 1
+			ax1.axvspan(shade_start - 0.5, shade_end - 0.5, color='lightgrey', alpha=0.3, zorder=0)
 		ax1.plot(xq, q_df['Predicted_Intervention'], label='Predicted Intervention', color=colors['predicted'], linewidth=2.5)
 		ax1.plot(xq, q_df['Reported_FX_Transactions'], label='Reported FX Transactions', color=colors['reported'], linewidth=2.5, linestyle='--')
 		ax1.axhline(0, color='black', alpha=0.3)
-		ax1.set_ylabel('Quarterly Flow (CHF Millions)')
+		ax1.set_ylabel('Quarterly Flow (CHF Millions)', fontsize=14)
+		ax1.tick_params(axis='both', which='major', labelsize=12)
 		format_quarter_axis(ax1, q_df['QLabel'].tolist())
 		for spine in ['top','right']:
 			ax1.spines[spine].set_visible(False)
 		import matplotlib.ticker as mtick
 		ax1.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
 		ax1.grid(False)
-		ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False); plt.tight_layout(); plt.show()
+		ax1.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
+		# Add label to shaded region after plot is created
+		if shade_mask.any():
+			mid_shade = (shade_start + shade_end - 1) / 2
+			y_range = ax1.get_ylim()[1] - ax1.get_ylim()[0]
+			y_pos = ax1.get_ylim()[1] - 0.01 * y_range
+			ax1.text(mid_shade, y_pos, 'Credit Suisse\nEmergency Lending', 
+					ha='center', va='top', fontsize=9, color='dimgray', style='italic')
+		# Add directional arrows on right side inside plot
+		x_arrow = len(q_df) - 1.5
+		y_min, y_max = ax1.get_ylim()
+		y_range = y_max - y_min
+		arrow_y_up = y_max * 0.6 if y_max > 0 else y_range * 0.2
+		arrow_y_down = y_min * 0.6 if y_min < 0 else -y_range * 0.2
+		# Up arrow (green)
+		arrow_up_start = arrow_y_up - y_range * 0.08
+		ax1.annotate('', xy=(x_arrow, arrow_y_up), xytext=(x_arrow, arrow_up_start),
+					arrowprops=dict(arrowstyle='->', lw=2.5, color='green'))
+		arrow_up_center = (arrow_y_up + arrow_up_start) / 2
+		ax1.text(x_arrow - 0.5, arrow_up_center, 'Buying FC\nSelling CHF', 
+				fontsize=8, color='green', va='center', ha='right', weight='bold')
+		# Down arrow (red)
+		arrow_down_start = arrow_y_down + y_range * 0.08
+		ax1.annotate('', xy=(x_arrow, arrow_y_down), xytext=(x_arrow, arrow_down_start),
+					arrowprops=dict(arrowstyle='->', lw=2.5, color='red'))
+		arrow_down_center = (arrow_y_down + arrow_down_start) / 2
+		ax1.text(x_arrow - 0.5, arrow_down_center, 'Selling FC\nBuying CHF', 
+				fontsize=8, color='red', va='center', ha='right', weight='bold')
+		plt.tight_layout(); plt.show()
 
-		# 2) Correlation scatter
-		clean = q_df[['Predicted_Intervention','Reported_FX_Transactions']].dropna()
-		fig2, ax2 = plt.subplots(figsize=(10,8))
-		if len(clean) > 2:
-			corr = clean['Predicted_Intervention'].corr(clean['Reported_FX_Transactions'])
-			min_val = min(clean.min())
-			max_val = max(clean.max())
-			ax2.scatter(clean['Predicted_Intervention'], clean['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
+		# Statistics: full period vs excluding 2023Q1-Q2
+		clean_full = q_df[['Predicted_Intervention', 'Reported_FX_Transactions']].dropna()
+		clean_excl = q_df[~shade_mask][['Predicted_Intervention', 'Reported_FX_Transactions']].dropna()
+		if len(clean_full) > 2:
+			corr_full = clean_full['Predicted_Intervention'].corr(clean_full['Reported_FX_Transactions'])
+			mae_full = abs(clean_full['Predicted_Intervention'] - clean_full['Reported_FX_Transactions']).mean()
+			rmse_full = np.sqrt(((clean_full['Predicted_Intervention'] - clean_full['Reported_FX_Transactions'])**2).mean())
+			print('\nAsset-Side Second Proxy Summary (Full Period 2020+):')
+			print(f'  Correlation: {corr_full:.3f}')
+			print(f'  Mean Absolute Error: {mae_full:,.1f} CHF Millions')
+			print(f'  Root Mean Square Error: {rmse_full:,.1f} CHF Millions')
+			print(f'  Quarterly data points: {len(clean_full)}')
+		if len(clean_excl) > 2:
+			corr_excl = clean_excl['Predicted_Intervention'].corr(clean_excl['Reported_FX_Transactions'])
+			mae_excl = abs(clean_excl['Predicted_Intervention'] - clean_excl['Reported_FX_Transactions']).mean()
+			rmse_excl = np.sqrt(((clean_excl['Predicted_Intervention'] - clean_excl['Reported_FX_Transactions'])**2).mean())
+			print('\nAsset-Side Second Proxy Summary (Excluding 2023Q1-Q2):')
+			print(f'  Correlation: {corr_excl:.3f}')
+			print(f'  Mean Absolute Error: {mae_excl:,.1f} CHF Millions')
+			print(f'  Root Mean Square Error: {rmse_excl:,.1f} CHF Millions')
+			print(f'  Quarterly data points: {len(clean_excl)}')
+
+		# 2) Correlation scatter - Full Period
+		clean_full = q_df[['Predicted_Intervention','Reported_FX_Transactions']].dropna()
+		fig2, ax2 = plt.subplots(figsize=(12,8))
+		if len(clean_full) > 2:
+			corr_full = clean_full['Predicted_Intervention'].corr(clean_full['Reported_FX_Transactions'])
+			min_val = min(clean_full.min())
+			max_val = max(clean_full.max())
+			ax2.scatter(clean_full['Predicted_Intervention'], clean_full['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
 			ax2.plot([min_val, max_val],[min_val, max_val], color=colors['perfect'], linestyle='--', linewidth=2, label='Perfect Correlation')
-			z = np.polyfit(clean['Predicted_Intervention'], clean['Reported_FX_Transactions'], 1)
+			z = np.polyfit(clean_full['Predicted_Intervention'], clean_full['Reported_FX_Transactions'], 1)
 			p = np.poly1d(z)
-			ax2.plot(clean['Predicted_Intervention'], p(clean['Predicted_Intervention']), color=colors['trend'], linewidth=2, label='Trend')
-		ax2.set_xlabel('Predicted Intervention (CHF Millions)')
-		ax2.set_ylabel('Reported FX Transactions (CHF Millions)')
+			ax2.plot(clean_full['Predicted_Intervention'], p(clean_full['Predicted_Intervention']), color=colors['trend'], linewidth=2, label=f'Trend (r={corr_full:.3f})')
+		ax2.set_xlabel('Predicted Intervention (CHF Millions)', fontsize=14)
+		ax2.set_ylabel('Reported FX Transactions (CHF Millions)', fontsize=14)
+		ax2.tick_params(axis='both', which='major', labelsize=12)
 		for spine in ['top','right']:
 			ax2.spines[spine].set_visible(False)
 		ax2.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
 		ax2.xaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+		ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
 		ax2.grid(False)
+		plt.tight_layout(); plt.show()
 
-		# 3) Monthly IMF Reserves vs Balance Sheet FX Investments
-		if self.imf_reserves is not None and self.monthly_fx_investments is not None:
-			imf = self.imf_reserves.copy(); fxm = self.monthly_fx_investments.copy()
-			imf['Date'] = pd.to_datetime(imf['Date']); fxm['Date'] = pd.to_datetime(fxm['Date'])
-			fx_col = [c for c in fxm.columns if 'Foreign Currency Investments' in c]
-			if fx_col:
-				fxm = fxm[['Date', fx_col[0]]].rename(columns={fx_col[0]:'FX_Investments_Level'})
-				merged = imf.merge(fxm, on='Date', how='left')
-				merged = merged[merged['Date'] >= pd.to_datetime('2020-01-01')].copy().sort_values('Date')
-				merged['MonthLabel'] = merged['Date'].dt.strftime('%Y-%m')
-				xm = range(len(merged))
-				fig, ax = plt.subplots(figsize=(12,8))
-				ax.plot(xm, merged['IMF_Reserves'], label='IMF\'s SNB Reserves Prediction', color=colors['predicted'], linewidth=2.2)
-				ax.plot(xm, merged['FX_Investments_Level'], label='FX Investments Level', color=colors['trend'], linewidth=2.2, linestyle='--')
-				# Tick every 3rd month
-				ticks = [i for i in xm if i % 3 == 0]
-				ax.set_xticks(ticks)
-				ax.set_xticklabels([merged['MonthLabel'].iloc[i] for i in ticks], rotation=45, ha='right')
-				ax.set_ylabel('CHF Millions')
-				for spine in ['top','right']:
-					ax.spines[spine].set_visible(False)
-				ax.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
-				ax.grid(False)
-				ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False)
+		# 2b) Correlation scatter - Excluding 2023Q1-Q2
+		q1_2023 = pd.Period('2023Q1', freq='Q')
+		q2_2023 = pd.Period('2023Q2', freq='Q')
+		shade_mask = (q_df['Quarter'] >= q1_2023) & (q_df['Quarter'] <= q2_2023)
+		clean_excl = q_df[~shade_mask][['Predicted_Intervention','Reported_FX_Transactions']].dropna()
+		fig2b, ax2b = plt.subplots(figsize=(12,8))
+		if len(clean_excl) > 2:
+			corr_excl = clean_excl['Predicted_Intervention'].corr(clean_excl['Reported_FX_Transactions'])
+			min_val = min(clean_excl.min())
+			max_val = max(clean_excl.max())
+			ax2b.scatter(clean_excl['Predicted_Intervention'], clean_excl['Reported_FX_Transactions'], color=colors['predicted'], alpha=0.85, s=80, edgecolors='black', linewidth=0.8)
+			ax2b.plot([min_val, max_val],[min_val, max_val], color=colors['perfect'], linestyle='--', linewidth=2, label='Perfect Correlation')
+			z = np.polyfit(clean_excl['Predicted_Intervention'], clean_excl['Reported_FX_Transactions'], 1)
+			p = np.poly1d(z)
+			ax2b.plot(clean_excl['Predicted_Intervention'], p(clean_excl['Predicted_Intervention']), color=colors['trend'], linewidth=2, label=f'Trend (r={corr_excl:.3f})')
+		ax2b.set_xlabel('Predicted Intervention (CHF Millions)', fontsize=14)
+		ax2b.set_ylabel('Reported FX Transactions (CHF Millions)', fontsize=14)
+		ax2b.tick_params(axis='both', which='major', labelsize=12)
+		for spine in ['top','right']:
+			ax2b.spines[spine].set_visible(False)
+		ax2b.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+		ax2b.xaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+		ax2b.legend(loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=12)
+		ax2b.grid(False)
+		plt.tight_layout(); plt.show()
 
-		# Summary metrics
-		if len(clean) > 2:
-			mae = abs(clean['Predicted_Intervention'] - clean['Reported_FX_Transactions']).mean()
-			rmse = np.sqrt(((clean['Predicted_Intervention'] - clean['Reported_FX_Transactions'])**2).mean())
-			corr = clean['Predicted_Intervention'].corr(clean['Reported_FX_Transactions'])
-			print('\nValuation-Adjusted Intervention Summary:')
-			print(f'  Correlation: {corr:.3f}')
-			print(f'  Mean Absolute Error: {mae:.1f} CHF Millions')
-			print(f'  Root Mean Square Error: {rmse:.1f} CHF Millions')
-			print(f'  Quarterly data points: {len(clean)}')
+		# 3) Monthly bar chart (past 24 months)
+		if self.monthly_interventions is not None:
+			monthly_df = self.monthly_interventions.copy()
+			monthly_df['Date'] = pd.to_datetime(monthly_df['Date'])
+			cutoff = pd.Timestamp.now() - pd.DateOffset(months=24)
+			recent = monthly_df[monthly_df['Date'] >= cutoff].copy()
+			recent = recent.sort_values('Date')
+			recent['MonthLabel'] = recent['Date'].dt.strftime('%Y-%m')
+			fig3, ax3 = plt.subplots(figsize=(14, 6))
+			xm = range(len(recent))
+			ax3.bar(xm, recent['Predicted_Intervention'], color=colors['predicted'], alpha=0.8, edgecolor='black', linewidth=0.5)
+			ax3.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+			tick_pos = [i for i in xm if i % 3 == 0]
+			ax3.set_xticks(tick_pos)
+			ax3.set_xticklabels([recent['MonthLabel'].iloc[i] for i in tick_pos], rotation=45, ha='right', fontsize=11)
+			ax3.set_ylabel('Monthly Flow (CHF Millions)', fontsize=14)
+			ax3.tick_params(axis='y', which='major', labelsize=12)
+			for spine in ['top','right']:
+				ax3.spines[spine].set_visible(False)
+		ax3.yaxis.set_major_formatter(mtick.StrMethodFormatter('{x:,.0f}'))
+		ax3.grid(False)
+		plt.tight_layout(); plt.show()
 
 	def create_monthly_imf_vs_fx_investments_plot(self) -> None:
 		"""Plot monthly IMF reserves level against monthly balance sheet FX investments level (from 2020 onwards)."""
